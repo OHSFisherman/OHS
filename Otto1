@@ -1,0 +1,1590 @@
+// ==ClosureCompiler==
+// @compilation_level ADVANCED_OPTIMIZATIONS
+// @externs_url https://raw.githubusercontent.com/google/closure-compiler/master/contrib/externs/chrome_extensions.js
+// ==/ClosureCompiler==
+
+function GM_xmlhttpRequest(request) {
+  chrome.runtime.sendMessage(
+    { msg: "make_ajax_request", data: { url: request.url } },
+    function(response) {
+      request.onload(response);
+    }
+  );
+}
+
+function addStyle(styleText) {
+  var style = '<style type="text/css">' + styleText + "</style>";
+  $("head").append(style);
+}
+
+var _this = this;
+var dialog, profileDialog, projectPreferencesDialog;
+var settings;
+let currentProjectPreferences;
+var progressBar;
+var currentPageHit;
+var isHtmlInjectedOnce = false;
+var pageType = {
+  DASHBOARD: false,
+  HIT: false,
+  REQUESTER: false,
+  SEARCH: false,
+  QUALIFICATIONS: false,
+  TRANSFERS: false,
+  EARNINGS: false
+};
+(blocked_requesters = {}),
+  (favourite_requesters = {}),
+  (favourite_keywords = {}),
+  (blocked_keywords = {});
+let authUser,
+  userDetails = {};
+
+var URL_POSTFIX = "&doNotRedirect=true";
+if (!("contains" in String.prototype)) {
+  String.prototype.contains = function(str, startIndex) {
+    return -1 !== String.prototype.indexOf.call(this, str, startIndex);
+  };
+}
+
+function injectHtmlInPage(user) {
+  if (!isHtmlInjectedOnce) {
+    let iconCssUrl = chrome.extension.getURL("src/styles/icon.css");
+    if (!$("link[href='" + iconCssUrl + "']").length) injectStyles(iconCssUrl);
+    let mdcCssUrl = chrome.extension.getURL(
+      "src/styles/material-components-web.min.css"
+    );
+    if (!$("link[href='" + mdcCssUrl + "']").length) injectStyles(mdcCssUrl);
+
+    let profileDialogCssUrl = chrome.extension.getURL(
+      "src/styles/tg_profile_dialog_style.css"
+    );
+    if (!$("link[href='" + profileDialogCssUrl + "']").length)
+      injectStyles(profileDialogCssUrl);
+
+    let feedCssUrl = chrome.extension.getURL("src/styles/tg_feed_style.css");
+    if (!$("link[href='" + feedCssUrl + "']").length) injectStyles(feedCssUrl);
+    prependProgressbar();
+    // appendFeedbox();
+    appendDialogHTML();
+    appendSnackbarHTML();
+    appendTurkingGuruProfileDialog();
+    $(document.body).addClass("mdc-typography");
+    window.mdc.autoInit();
+    isHtmlInjectedOnce = true;
+  }
+  setTurkingGuruHeader();
+}
+function dejectHtmlInPage() {}
+
+function initializeFeedbox() {
+  var arrow = $(".feed-head img");
+  arrow.on("click", function() {
+    var src = arrow.attr("src");
+
+    $(".feed-body").slideToggle("fast");
+    if (
+      src ==
+      "https://maxcdn.icons8.com/windows10/PNG/16/Arrows/angle_down-16.png"
+    ) {
+      arrow.attr(
+        "src",
+        "https://maxcdn.icons8.com/windows10/PNG/16/Arrows/angle_up-16.png"
+      );
+    } else {
+      arrow.attr(
+        "src",
+        "https://maxcdn.icons8.com/windows10/PNG/16/Arrows/angle_down-16.png"
+      );
+    }
+  });
+}
+
+function appendTurkingGuruProfileDialog() {
+  $.ajax(chrome.extension.getURL("src/html/tg_profile_dialog.html")).done(
+    function(data) {
+      $(document.body).append(data);
+    }
+  );
+}
+
+function appendFeedbox() {
+  $.ajax(chrome.extension.getURL("src/html/feed-box.html")).done(function(
+    data
+  ) {
+    $(document.body).append(data);
+    initializeFeedbox();
+  });
+}
+
+function appendDrawer() {
+  $.ajax(chrome.extension.getURL("src/html/drawer.html")).done(function(data) {
+    $(document.body).append(data);
+  });
+}
+
+function prependProgressbar() {
+  $.ajax(chrome.extension.getURL("src/html/progress-bar.html")).done(function(
+    data
+  ) {
+    $(document.body).prepend(data);
+    progressBar = new mdc.linearProgress.MDCLinearProgress(
+      document.querySelector(".mdc-linear-progress")
+    );
+    progressBar.close();
+  });
+}
+
+function startMainIntro() {
+  var intro = introJs();
+  intro.setOptions({
+    steps: [
+      {
+        intro: "Hello and welcome to Turking Guru!",
+        position: "top"
+      },
+      {
+        position: "top",
+        intro:
+          "<i>Why do I need to use Turking Guru?</i><br/> As you know tasks you accept to work on mTurk are on first come first serve basis and as a human being chances to manually accept tasks you like to work on reduce significantly before someone else accepts them. This is where Turking Guru comes in, it increases your chances to accept tasks based on your preferences and there by increases your <b>earnings</b>."
+      },
+      {
+        position: "top",
+        intro:
+          "<i>How does Turking Guru work?</i><br/>As a Turking Guru user you set some filters before you start turking using Turking Guru. After you start turking, Turking Guru periodically checks for new tasks and whenever new tasks come by it checks whether each task passes the filters you chose initially. Now Turking Guru tries to accept only those tasks which pass through all the filters."
+      },
+      {
+        intro:
+          "<i>What preferences does Turking Guru provide to filter the tasks?</i><br/> Each task posted on mTurk has few properties associated to it like task reward, title, description, requester details. Now based on these properties we provide few preferences like <ul><li>Minimum HIT reward</li><li>HIT acceptance mode</li><li>Favourite requesters</li><li>Blocked requesters</li><li>Favourite keywords</li><li>Blocked keywords</li><li>Requester settings<ul><li>Minimum wage rate</li><li>Minimum task approval rate</li><li>Maximum task review time</li><li>Minimum requester activity level</li></ul></li></ul>",
+        position: "top"
+      },
+      {
+        element: "#tg_settings_button",
+        position: "auto",
+        intro: "Use this button to set Turking Guru settings."
+      },
+      {
+        element: "#tg_toggle_turking",
+        position: "auto",
+        intro: "Use this button to toggle turking status."
+      }
+    ],
+    doneLabel: "Start turking",
+    skipLabel: "Start turking"
+  });
+  introJs.fn.onskip(() => {
+    toggleTurkingStatus();
+  });
+  intro.start();
+}
+
+function setTurkingGuruHeader() {
+  let workerIdDiv, signOutHeaderDiv;
+  if ($("#workerIdHeaderDiv").length == 0) {
+    workerIdDiv = $(".me-bar .row .col-xs-7");
+    workerIdDiv.attr("id", "workerIdHeaderDiv");
+    workerIdDiv.attr("class", "col-xs-2");
+  }
+  if ($("#signOutHeaderDiv").length == 0) {
+    signOutHeaderDiv = $(".me-bar .row .col-xs-5");
+    signOutHeaderDiv.attr("id", "signOutHeaderDiv");
+    signOutHeaderDiv.attr("class", "col-xs-2 text-xs-right");
+  }
+
+  workerIdDiv = $("#workerIdHeaderDiv");
+  signOutHeaderDiv = $("#signOutHeaderDiv");
+
+  let tgHeader = $("#tg_header_content_wrapper");
+  tgHeader.remove();
+  if (settings != null) {
+    $(
+      $("<div id='tg_header_content_wrapper' class='col-xs-8'>")
+        .css("display", "flex")
+        .append("<span id='tg_refresh_time'></span>")
+        .append(
+          $("<a  id='tg_settings_button'>")
+            .text("Otto Settings")
+            .css("margin", "0 16px")
+            .attr("href", "javascript:void(0)")
+            .unbind()
+            .click(showTurkingGuruSettingsDialog)
+        )
+        .append(
+          $("<a id='tg_toggle_turking'>")
+            .text((settings.isTurking ? "Stop" : "Start") + " turking")
+            .css("margin", "0 16px")
+            .attr("href", "javascript:void(0)")
+            .unbind()
+            .click(toggleTurkingStatus)
+        )
+    ).insertAfter(workerIdDiv);
+  } else {
+    $(
+      $("<div id='tg_header_content_wrapper' class='col-xs-8'>")
+        .css("display", "flex")
+        .append(
+          "<span id='tg_sign_in_text'>Sign in to anonymously to start turking: </span>"
+        )
+        .append(
+          $("<a id='tg_sign_in_button'>")
+            .text("Click here to sign in")
+            .css("margin", "0 16px")
+            .attr("href", "javascript:void(0)")
+            .unbind()
+            .click(startSignIn)
+        )
+    ).insertAfter(workerIdDiv);
+  }
+}
+
+function startSignIn() {
+  if (progressBar != null) progressBar.open();
+  chrome.runtime.sendMessage({ msg: "sign_in" });
+}
+
+function showCaptchaDialog() {
+  if (profileDialog == null)
+    profileDialog = new mdc.dialog.MDCDialog(
+      document.querySelector("#tg_profile_dialog")
+    );
+  profileDialog.open();
+}
+
+function showTurkingGuruSettingsDialog() {
+  let hitPrefs = Object.assign({}, settings.hitPreferences);
+  let requesterPrefs =
+    settings.requesterPreferences != null
+      ? Object.assign({}, settings.requesterPreferences)
+      : {
+          minTaskApprovalRate: 50,
+          maxTaskReviewTime: 31,
+          minActivityLevel: "N/A",
+          minWageRate: 0.01
+        };
+  let playSoundOnHitAccept=settings.playSoundOnHitAccept!=null?settings.playSoundOnHitAccept:true;      
+  let newHitNewTab =
+    settings.newHitNewTab != null ? settings.newHitNewTab : true;
+  let stopOnCaptcha =
+    settings.stopOnCaptcha != null ? settings.stopOnCaptcha : false;
+  let hitsPageSize =
+    settings.hitsPageSize != null ? settings.hitsPageSize : "20";
+  let preventRateLimitError =
+    settings.preventRateLimitError != null
+      ? settings.preventRateLimitError
+      : false;
+  let filterByRequesterInfo =
+    settings.filterByRequesterInfo != null
+      ? settings.filterByRequesterInfo
+      : false;
+  hitPrefs.hitRefreshTime = hitPrefs.hitRefreshTime / 1000;
+  if (profileDialog == null)
+    profileDialog = new mdc.dialog.MDCDialog(
+      document.querySelector("#tg_profile_dialog")
+    );
+  profileDialog.open();
+  function updateSettings() {
+    chrome.runtime.sendMessage(
+      {
+        msg: "update_settings",
+        data: {
+          hitPreferences: hitPrefs,
+          hitsPageSize: hitsPageSize,
+          newHitNewTab: newHitNewTab,
+          stopOnCaptcha: stopOnCaptcha,
+          playSoundOnHitAccept:playSoundOnHitAccept,
+          preventRateLimitError: preventRateLimitError,
+          requesterPreferences: requesterPrefs,
+          filterByRequesterInfo: filterByRequesterInfo
+        }
+      },
+      response => {
+        if (response.successful) {
+          settings.hitPreferences = hitPrefs;
+          settings.requesterPreferences = requesterPrefs;
+          showSnackBar("Settings saved successfully.");
+        }
+      }
+    );
+  }
+  let exportDataButton,
+    minimumRewardSlider,
+    hitRefreshTimeSlider,
+    requesterTaskApprovalRateSlider,
+    requesterWageRateSlider,
+    requesterTaskReviewTimeSlider,
+    returnAutomaticallyCheckbox,
+    playSoundCheckbox,
+    stopOnCaptchaCheckbox,
+    newHitNewTabCheckbox,
+    filterByRequesterInfoCheckbox,
+    hitAcceptanceModeSelect,
+    pageSizeSelect,
+    minRequesterActivitySelect,
+    preventRateLimitErrorCheckbox;
+  let sliderChangeListener = e => {
+    switch (e.target.id) {
+      case "reward_slider":
+        hitPrefs.minimumReward = parseFloat(
+          minimumRewardSlider.value.toFixed(2)
+        );
+        $("#min_reward_slider_ui_text").text(hitPrefs.minimumReward);
+        break;
+      case "hit_refresh_time_slider":
+        hitPrefs.hitRefreshTime = hitRefreshTimeSlider.value;
+        $("#hit_refresh_time_slider_ui_text").text(hitPrefs.hitRefreshTime);
+        break;
+      case "requester_task_review_time_slider":
+        requesterPrefs.maxTaskReviewTime = requesterTaskReviewTimeSlider.value;
+        $("#max_task_review_time_slider_ui_text").text(
+          requesterPrefs.maxTaskReviewTime
+        );
+        break;
+      case "requester_task_approval_rate_slider":
+        requesterPrefs.minTaskApprovalRate =
+          requesterTaskApprovalRateSlider.value;
+        $("#requester_task_approval_rate_slider_ui_text").text(
+          requesterPrefs.minTaskApprovalRate
+        );
+        break;
+      case "requester_wage_rate_slider":
+        requesterPrefs.minWageRate = requesterWageRateSlider.value;
+        $("#requester_wage_rate_slider_ui_text").text(
+          requesterPrefs.minWageRate
+        );
+    }
+  };
+  let chipRemovalListener = function(event) {
+    let id = event.detail.root.id;
+    let chipSetId = $(event.target)
+      .parent()
+      .attr("id");
+    let chipSetAction =
+      "remove_" +
+      (chipSetId.indexOf("keyword") > -1 ? "keyword" : "requester") +
+      "_liking";
+    chrome.runtime.sendMessage(
+      { msg: chipSetAction, data: { id: id } },
+      response => {
+        delete _this[chipSetId.substring(0, chipSetId.indexOf("_chip_set"))][
+          id
+        ];
+        changeChipInputWidth();
+      }
+    );
+    this.removeChild(event.detail.root);
+  };
+
+  function addChipsForCards() {
+    [
+      "#favourite_requesters_chip_set",
+      "#blocked_requesters_chip_set",
+      "#favourite_keywords_chip_set",
+      "#blocked_keywords_chip_set"
+    ].forEach(chipsetSelector => {
+      const chipSetEl = document.querySelector(chipsetSelector);
+      $(chipSetEl)
+        .off()
+        .on("MDCChip:removal", chipRemovalListener.bind(chipSetEl));
+
+      addChips(
+        chipsetSelector,
+        _this[
+          chipsetSelector.substring(1, chipsetSelector.indexOf("_chip_set"))
+        ]
+      );
+    });
+  }
+
+  function setInitialValues() {
+    exportDataButton = $("#tg_export_data_button");
+    importDataButton = $("#tg_import_data_button");
+    let sliders = document.querySelectorAll(".mdc-slider");
+    returnAutomaticallyCheckbox = document.querySelector("#return_auto_input");
+    newHitNewTabCheckbox = document.querySelector("#open_in_new_tab_input");
+    playSoundCheckbox=document.querySelector("#play_sound_input");
+    filterByRequesterInfoCheckbox = document.querySelector(
+      "#filter_by_requester_info_input"
+    );
+    stopOnCaptchaCheckbox = document.querySelector("#stop_on_captcha_input");
+    preventRateLimitErrorCheckbox = document.querySelector(
+      "#prevent_rate_limit_error_input"
+    );
+    hitAcceptanceModeSelect = new mdc.select.MDCSelect(
+      document.querySelector("#hit_acceptance_mode_select")
+    );
+    pageSizeSelect = new mdc.select.MDCSelect(
+      document.querySelector("#page_size_select")
+    );
+    minRequesterActivitySelect = new mdc.select.MDCSelect(
+      document.querySelector("#minimum_requester_activity_select")
+    );
+    filterByRequesterInfoCheckbox.checked = filterByRequesterInfo;
+    returnAutomaticallyCheckbox.checked = hitPrefs.returnAutomatically;
+    newHitNewTabCheckbox.checked = newHitNewTab;
+    pageSizeSelect.value = hitsPageSize;
+    playSoundCheckbox.checked=playSoundOnHitAccept;
+    stopOnCaptchaCheckbox.checked = stopOnCaptcha;
+    preventRateLimitErrorCheckbox.checked = preventRateLimitError;
+    hitAcceptanceModeSelect.value = hitPrefs.hitAcceptanceMode;
+    minRequesterActivitySelect.value = requesterPrefs.minActivityLevel;
+    $("#min_reward_slider_ui_text").text(hitPrefs.minimumReward);
+    $("#hit_refresh_time_slider_ui_text").text(hitPrefs.hitRefreshTime);
+    $("#requester_wage_rate_slider_ui_text").text(
+      requesterPrefs.minWageRate || "0.01"
+    );
+    $("#requester_task_approval_rate_slider_ui_text").text(
+      requesterPrefs.minTaskApprovalRate
+    );
+    $("#max_task_review_time_slider_ui_text").text(
+      requesterPrefs.maxTaskReviewTime
+    );
+    sliders.forEach(slider => {
+      let mdcSlider = new mdc.slider.MDCSlider(slider);
+      switch (slider.id) {
+        case "reward_slider":
+          minimumRewardSlider = mdcSlider;
+          mdcSlider.value = hitPrefs.minimumReward;
+          break;
+        case "hit_refresh_time_slider":
+          hitRefreshTimeSlider = mdcSlider;
+          mdcSlider.value = hitPrefs.hitRefreshTime;
+          break;
+        case "requester_task_review_time_slider":
+          requesterTaskReviewTimeSlider = mdcSlider;
+          mdcSlider.value = requesterPrefs.maxTaskReviewTime || 31;
+          break;
+        case "requester_task_approval_rate_slider":
+          requesterTaskApprovalRateSlider = mdcSlider;
+          mdcSlider.value = requesterPrefs.minTaskApprovalRate || 50;
+          break;
+        case "requester_wage_rate_slider":
+          requesterWageRateSlider = mdcSlider;
+          mdcSlider.value = requesterPrefs.minWageRate || 0.01;
+      }
+
+      mdcSlider.layout();
+    });
+  }
+
+  function addListenersForSettingElements() {
+    exportDataButton.click(() => {
+      chrome.runtime.sendMessage({ msg: "get_export_data" }, response => {
+        let exportData = response.data;
+        if (exportData != null) {
+          var dataStr =
+            "data:text/json;charset=utf-8," +
+            encodeURIComponent(JSON.stringify(exportData));
+          var downloadAnchorNode = document.createElement("a");
+          downloadAnchorNode.setAttribute("href", dataStr);
+          downloadAnchorNode.setAttribute("download", "tg_data.json");
+          document.body.appendChild(downloadAnchorNode); // required for firefox
+          downloadAnchorNode.click();
+          downloadAnchorNode.remove();
+        }
+      });
+    });
+    importDataButton.click(() => {
+      $("#import_input").click();
+    });
+    $("#import_input").change(importData);
+
+    $(".mdc-slider")
+      .off()
+      .on("MDCSlider:change", sliderChangeListener);
+    $("#return_auto_input")
+      .off()
+      .on("change", function() {
+        hitPrefs.returnAutomatically = this.checked;
+      });
+
+    $("#open_in_new_tab_input")
+      .off()
+      .on("change", function() {
+        newHitNewTab = this.checked;
+      });
+    
+      $("#play_sound_input")
+      .off()
+      .on("change", function() {
+        playSoundOnHitAccept = this.checked;
+      });  
+    $("#stop_on_captcha_input")
+      .off()
+      .on("change", function() {
+        stopOnCaptcha = this.checked;
+      });
+    $("#filter_by_requester_info_input")
+      .off()
+      .on("change", function() {
+        filterByRequesterInfo = this.checked;
+      });
+    $("#prevent_rate_limit_error_input")
+      .off()
+      .on("change", function() {
+        preventRateLimitError = this.checked;
+      });
+    $(".mdc-select").on("MDCSelect:change", e => {
+      switch (e.target.id) {
+        case "hit_acceptance_mode_select":
+          hitPrefs.hitAcceptanceMode = hitAcceptanceModeSelect.value;
+          break;
+        case "minimum_requester_activity_select":
+          requesterPrefs.minActivityLevel = minRequesterActivitySelect.value;
+          break;
+        case "page_size_select":
+          hitsPageSize = pageSizeSelect.value;
+      }
+    });
+
+    $(".chip-input").on("keydown", function(event) {
+      if (event.key === "Enter" || event.keyCode === 13) {
+        let chipSetId = $(this)
+          .parent()
+          .attr("id");
+        let chipSetAction =
+          "add_" + chipSetId.substring(0, chipSetId.indexOf("s_chip_set"));
+        let inputValue = $(this).val();
+
+        if (
+          chipSetId != null &&
+          inputValue != null &&
+          inputValue.length > 0 &&
+          chipSetAction.length > 4
+        ) {
+          chrome.runtime.sendMessage({ msg: "get_push_id" }, response => {
+            if (response != null && response.data != null) {
+              let pushId = response.data.pushId;
+              let keyword = { name: inputValue, id: pushId };
+              if (pushId != null) {
+                chrome.runtime.sendMessage(
+                  {
+                    msg: chipSetAction,
+                    data: keyword
+                  },
+                  response => {
+                    if (response.successful) {
+                      addChips("#" + chipSetId, { pushId: keyword });
+
+                      showSnackBar("Added to favourite/blocked keywords list.");
+                    } else {
+                      showSnackBar(response.message);
+                    }
+                    $(this).val("");
+                  }
+                );
+              }
+            }
+          });
+        }
+      }
+    });
+  }
+
+  let closedDialogHandler = function(e) {
+    hitPrefs.hitRefreshTime = hitPrefs.hitRefreshTime * 1000;
+
+    removeChips();
+    if (event.detail.action == "save") {
+      updateSettings();
+    }
+    if (exportDataButton != null) exportDataButton.unbind();
+    if (importDataButton != null) importDataButton.unbind();
+    $(".mdc-slider").off();
+    $(".mdc-select").off();
+    $("#tg_profile_dialog").off();
+    $(".mdc-chip-set").off();
+    $("#profile_dialog_tab_bar").off();
+    $(".chip-input").off();
+  };
+
+  let openDialogHandler = function(e) {
+    addChipsForCards();
+    setInitialValues();
+    addListenersForSettingElements();
+  };
+  $("#tg_profile_dialog")
+    .off()
+    .on("MDCDialog:closed", closedDialogHandler)
+    .on("MDCDialog:opened", openDialogHandler);
+
+  function importData(e) {
+    var files = e.target.files,
+      reader = new FileReader();
+    reader.onload = onDataImported;
+    reader.readAsText(files[0]);
+  }
+
+  function onDataImported() {
+    try {
+      var importedData = JSON.parse(this.result);
+      chrome.runtime.sendMessage(
+        { msg: "save_imported_data", data: { importedData: importedData } },
+        response => {
+          if (response != null && response.msg == "successful_import") {
+            showSnackBar("Data imported successfully");
+            saveForegroundData(response.data);
+          }
+        }
+      );
+    } catch (error) {
+      showSnackBar("Invalid data provided");
+    }
+
+    //here is your imported data, and from here you should know what to do with it (save it to some storage, etc.)
+
+    $("#import_input").val(""); //make sure to clear input value after every import
+    if (profileDialog != null) profileDialog.close();
+  }
+}
+
+function showProjectPreferencesDialog() {
+  if (projectPreferencesDialog == null) {
+    projectPreferencesDialog = new mdc.dialog.MDCDialog(
+      document.querySelector("#tg_project_preferences_dialog")
+    );
+  }
+  projectPreferencesDialog.open();
+
+  let projectPrefs = Object.assign({}, currentProjectPreferences);
+  let maxHitCountSlider, blockProjectCheckbox;
+  let initialMaxHitCount = projectPrefs.maxAcceptCount;
+  let openDialogHandler = function(e) {
+    setInitialValues();
+    addListenersForValueChanges();
+  };
+  let closedDialogHandler = function(e) {
+    if (event.detail.action == "save") {
+      updateProjectPreferences();
+    }
+
+    $("#tg_project_preferences_dialog input[type=checkbox]").off();
+    $(".mdc-slider").off();
+    $("#tg_project_preferences_dialog").off();
+  };
+
+  let sliderChangeListener = e => {
+    if (e.target.id == "max_hit_accept_count_slider") {
+      projectPrefs.maxAcceptCount =
+        initialMaxHitCount + parseInt(maxHitCountSlider.value);
+
+      $("#max_hit_accept_count_value").text(maxHitCountSlider.value);
+    }
+  };
+
+  function setInitialValues() {
+    let sliders = document.querySelectorAll(
+      "#tg_project_preferences_dialog .mdc-slider"
+    );
+    blockProjectCheckbox = new mdc.checkbox.MDCCheckbox(
+      document.querySelector("#tg_project_preferences_dialog .mdc-checkbox")
+    );
+    blockProjectCheckbox.checked = projectPrefs.blockAllProjectHits;
+    $("#max_hit_accept_count_value").text("0");
+
+    sliders.forEach(slider => {
+      let mdcSlider = new mdc.slider.MDCSlider(slider);
+      if (slider.id == "max_hit_accept_count_slider") {
+        maxHitCountSlider = mdcSlider;
+        mdcSlider.value = 0;
+      }
+
+      mdcSlider.layout();
+    });
+  }
+
+  function updateProjectPreferences() {
+    chrome.runtime.sendMessage(
+      {
+        msg: "update_project_preferences",
+        data: { projectPrefs: projectPrefs, projectId: projectPrefs.projectId }
+      },
+      response => {
+        if (response.data.successful) {
+          currentProjectPreferences = projectPrefs;
+          showSnackBar("Project preferences saved successfully.");
+        } else {
+          showSnackBar(
+            "Failed to update Project preferences. Try again later."
+          );
+        }
+      }
+    );
+  }
+
+  function addListenersForValueChanges() {
+    $("#tg_project_preferences_dialog .mdc-slider")
+      .off()
+      .on("MDCSlider:change", sliderChangeListener);
+    let htmlCheckbox = $("#tg_project_preferences_dialog input[type=checkbox]");
+    htmlCheckbox.off().on("change", function() {
+      projectPrefs.blockAllProjectHits = this.checked;
+    });
+  }
+
+  $("#tg_project_preferences_dialog")
+    .off()
+    .on("MDCDialog:closed", closedDialogHandler)
+    .on("MDCDialog:opened", openDialogHandler);
+}
+
+function removeChips() {
+  $(".mdc-chip").remove();
+}
+
+function addChips(chipsetSelector, chipData) {
+  $.ajax(chrome.runtime.getURL("src/html/chip.html")).done(function(data) {
+    const chipSetEl = document.querySelector(chipsetSelector);
+    const chipSet = new mdc.chips.MDCChipSet(chipSetEl);
+
+    for (var key in chipData) {
+      let currentChip = chipData[key];
+      if (currentChip != null) {
+        let nameProperty = currentChip["name"];
+
+        let name = nameProperty != null ? nameProperty : currentChip["id"];
+        let elementToAdd = $(data);
+        $(elementToAdd).attr("id", currentChip.id);
+        $(elementToAdd)
+          .find(".mdc-chip__text")
+          .text(name);
+        $(chipSetEl).prepend(elementToAdd);
+        chipSet.addChip(elementToAdd.get(0));
+      }
+    }
+  });
+}
+
+function toggleTurkingStatus() {
+  if (progressBar != null) progressBar.open();
+  let afterUpdateTurkingStatus = !settings.isTurking;
+
+  let toggleButton = $("#tg_toggle_turking");
+  toggleButton.click(() => false);
+  chrome.runtime.sendMessage({ msg: "can_turk" }, response => {
+    let data = response.data;
+
+    if (data.isTurkingAllowed || settings.isTurking) {
+      chrome.runtime.sendMessage(
+        {
+          msg: "update_settings",
+          data: { isTurking: afterUpdateTurkingStatus }
+        },
+        response => {
+          if (response.successful) {
+            let afterUpdate = afterUpdateTurkingStatus ? "started" : "stopped";
+            toggleButton.text(
+              (afterUpdateTurkingStatus ? "Stop" : "Start") + " turking"
+            );
+            showSnackBar("Turking " + afterUpdate + "!");
+            settings.isTurking = afterUpdateTurkingStatus;
+          } else {
+            showSnackBar(
+              "Failed to " +
+                (settings.isTurking ? "stop" : "start") +
+                " turking :("
+            );
+          }
+          toggleButton.unbind().click(toggleTurkingStatus);
+          progressBar.close();
+        }
+      );
+    } else {
+      showSnackBar(data.msg);
+      progressBar.close();
+    }
+  });
+}
+
+function onTGAuthStateChanged() {
+  if (authUser != null) {
+    chrome.runtime.sendMessage({ msg: "load_settings" }, response => {
+      settings = response.settings;
+      injectHtmlInPage();
+      if (pageType.HIT || pageType.REQUESTER || pageType.SEARCH) {
+        if (pageType.HIT) {
+          appendHitPreferencesDialog();
+          onHITWorkPageLoaded();
+          $("#MainContent").css({'padding-bottom':'64px'})
+        } else if (pageType.SEARCH) {
+          addLikeOrDislikeButtonOnEachHitRow();
+        } else if (pageType.REQUESTER) {
+          onRequesterPageLoaded();
+        }
+      }
+      chrome.runtime.sendMessage(
+        { msg: "load_foreground_dialog_data" },
+        response => {
+          if (response != null) {
+            saveForegroundData(response.data);
+          }
+        }
+      );
+    });
+    chrome.runtime.sendMessage({ msg: "get_user_details" }, response => {
+      userDetails = response.data.userDetails;
+      if (
+        userDetails.mturkId == null ||
+        (userDetails.mturkId != null && userDetails.mturkId.length < 15)
+      ) {
+        let data = $(".text-uppercase [data-react-class]").data("react-props");
+        if (data != null) {
+          chrome.runtime.sendMessage({
+            msg: "set_mturk_id",
+            data: { mturkId: data.textToCopy }
+          });
+        }
+      }
+    });
+    setTimeout(() => {
+      chrome.storage.local.get({ mainIntroShown: false }, data => {
+        if (!data.mainIntroShown) {
+          startMainIntro();
+          chrome.storage.local.set({ mainIntroShown: true });
+        }
+      });
+    }, 5);
+  } else {
+    injectHtmlInPage();
+  }
+}
+
+function saveForegroundData(data) {
+  favourite_keywords = data.favouriteKeywords;
+  favourite_requesters = data.favouriteRequesters;
+  blocked_keywords = data.blockedKeywords;
+  blocked_requesters = data.blockedRequesters;
+  changeChipInputWidth();
+}
+
+function changeChipInputWidth() {
+  let blockedKeywordInput = $("#blocked-keywords-text-field");
+  let favouriteKeywordInput = $("#fav-keywords-text-field");
+  if (Object.keys(favourite_keywords).length > 0)
+    favouriteKeywordInput.css("width", "120px");
+  else favouriteKeywordInput.css("width", "");
+
+  if (Object.keys(blocked_keywords).length > 0)
+    blockedKeywordInput.css("width", "120px");
+  else blockedKeywordInput.css("width", "");
+}
+
+$(document).ready(function() {
+  checkPageType();
+  chrome.runtime.sendMessage({ msg: "get_firebase_auth_user" }, response => {
+    authUser = response.data.user;
+    onTGAuthStateChanged();
+  });
+});
+
+function appendDialogHTML() {
+  $.ajax(chrome.runtime.getURL("src/html/dialog.html")).done(function(data) {
+    $(document.body).append(data);
+  });
+}
+
+function playSound() {
+    var ding = new Audio(chrome.runtime.getURL("src/audios/ding.wav"));
+    document.createElement("div").click();
+   setTimeout(()=>{
+    ding.play();
+   },2000) 
+}
+
+function onRequesterPageLoaded() {
+  let hits = getPageHitsFromSearchPage();
+  let requester = {};
+  if (hits.length > 0) {
+    let firstHit = hits[0];
+    requester.id = firstHit.requester_id;
+    requester.name = firstHit.requester_name;
+  } else {
+    requester.requesterID = getRequesterIDFromURL();
+  }
+  $("#MainContent").append(
+    getFabButton(
+      "favorite",
+      {
+        position: "absolute",
+        right: 16,
+        bottom: 16,
+        margin: 16,
+        "z-index": 10
+      },
+      function() {
+        showDialog(
+          "Favourite requester",
+          "Are you sure you want to add " +
+            (requester.requesterName != null
+              ? "<b>" + requester.requesterName + "</b>"
+              : "this requester") +
+            " to your favourite requesters list ?",
+          function(result) {
+            if (result) {
+              chrome.runtime.sendMessage(
+                {
+                  msg: "add_favourite_requester",
+                  data: requester
+                },
+                response => {
+                  showSnackBar("Added to favourite requesters list.");
+                }
+              );
+            }
+          }
+        );
+      }
+    ),
+    getFabButton(
+      "block",
+      {
+        position: "absolute",
+        left: 16,
+        bottom: 16,
+        margin: 16,
+        "z-index": 10
+      },
+      function() {
+        showDialog(
+          "Block requester",
+          "Are you sure you want to add " +
+            (requester.requesterName != null
+              ? "<b>" + requester.requesterName + "</b>"
+              : "this requester") +
+            " to your blocked requesters list ?",
+          function(result) {
+            if (result) {
+              chrome.runtime.sendMessage(
+                {
+                  msg: "add_blocked_requester",
+                  data: requester
+                },
+                response => {
+                  showSnackBar("Added to blocked requesters list.");
+                }
+              );
+            }
+          }
+        );
+      }
+    )
+  );
+  const button = document.querySelector(".fab-button");
+  mdc.ripple.MDCRipple.attachTo(button);
+}
+
+function showSnackBar(message) {
+  if ($("#tg-snackbar").length > 0) {
+    $("#tg-snackbar-label").text(message);
+    const snackbar = new mdc.snackbar.MDCSnackbar(
+      document.querySelector("#tg-snackbar")
+    );
+    snackbar.open();
+  }
+}
+
+function getFabButton(iconName, css, callback) {
+  return $(
+    '<button class="fab-button mdc-fab"><i class="material-icons mdc-button__icon" aria-hidden="true">' +
+      iconName +
+      "</i></button>"
+  )
+    .css(css)
+    .unbind()
+    .click(callback);
+}
+
+function appendSnackbarHTML() {
+  $.ajax(chrome.runtime.getURL("src/html/snackbar.html")).done(function(data) {
+    $(document.body).append(data);
+  });
+}
+
+function showDialog(title, description, callback) {
+  $("#tg-dialog-title").text(title);
+  $("#tg-dialog-content").html(description);
+  if (dialog == null)
+    dialog = new mdc.dialog.MDCDialog(document.querySelector("#tg-dialog"));
+  dialog.open();
+  dialog.listen("MDCDialog:closed", e => {
+    if (e.detail.action === "yes") {
+      callback(true);
+    } else {
+      callback(false);
+    }
+  });
+}
+
+function injectStyles(url) {
+  var elem = document.createElement("link");
+  elem.rel = "stylesheet";
+  elem.setAttribute("href", url);
+  document.head.appendChild(elem);
+}
+
+function getRequesterIDFromURL() {
+  if (pageType.REQUESTER) {
+    let urlParts = document.URL.split("/");
+    let requester_id = urlParts[urlParts.indexOf("requesters") + 1];
+    return requester_id;
+  } else {
+    return null;
+  }
+}
+
+function checkPageType() {
+  if (document.URL.startsWith("https://worker.mturk.com/dashboard")) {
+    pageType.DASHBOARD = true;
+    return;
+  } else if (document.URL.startsWith("https://worker.mturk.com/projects/")) {
+    pageType.HIT = true;
+    return;
+  } else if (document.URL.startsWith("https://worker.mturk.com/requesters/")) {
+    pageType.REQUESTER = true;
+    return;
+  } else if (
+    document.URL.startsWith("https://worker.mturk.com/qualifications/")
+  ) {
+    pageType.QUALIFICATIONS = true;
+    return;
+  } else if (document.URL.startsWith("https://worker.mturk.com/earnings/")) {
+    pageType.EARNINGS = true;
+    return;
+  } else if (document.URL.startsWith("https://worker.mturk.com/transfers/")) {
+    pageType.TRANSFERS = true;
+    return;
+  } else if (
+    document.URL == "https://worker.mturk.com/tasks" ||
+    document.URL == "https://worker.mturk.com/" ||
+    document.URL == "https://worker.mturk.com/projects" ||
+    document.URL.startsWith("https://worker.mturk.com/?") ||
+    document.URL.startsWith("https://worker.mturk.com/status_details")
+  ) {
+    pageType.SEARCH = true;
+  }
+}
+
+function getLocationToAppend() {
+  var location;
+
+  if (pageType.REQUESTER || pageType.SEARCH)
+    location = $(".projects-info-header h1");
+  else {
+    location = $("#MainContent h2").first();
+
+    if (!location.length) {
+      location = $(
+        ".project-detail-bar > .row .row [data-react-class]"
+      ).first();
+    }
+  }
+
+  return location;
+}
+
+function getPageHitsFromSearchPage() {
+  let hits = $("#MainContent .m-b-md [data-react-class]").data("react-props")
+    .bodyData;
+  if (hits == null)
+    hits = $("#MainContent .col-xs-12 [data-react-class]").data("react-props")
+      .bodyData;
+  return hits || [];
+}
+
+function addLikeOrDislikeButtonOnEachHitRow() {
+  let hits;
+  try {
+    hits = getPageHitsFromSearchPage();
+    if (hits.length > 0) {
+      chrome.runtime.sendMessage(
+        {
+          msg: "categorize_multiple",
+          data: {
+            hits: hits.map(hit => {
+              hit.classifierString = getClassifierStringFromHIT(hit);
+              return hit;
+            })
+          }
+        },
+        function(response) {
+          if (response == null) return;
+          hits = response.hits;
+
+          let style = {
+            display: "inline-block",
+            padding: "4px",
+            "z-index": 1
+          };
+          $(".desktop-row").each(function(index) {
+            $(this).prepend(
+              "<span class='prediction_span'>" +
+                "Prediction:" +
+                getHITFromReactId($(this).attr("data-reactid")).feeling +
+                "</span>"
+            );
+          });
+          $(".desktop-row").append(
+            $("<a class='training_anchor'> ")
+              .text("Like")
+              .attr("href", "javascript:void(0)")
+              .css(style)
+              .unbind()
+              .click(function(e) {
+                onFeelingClickAtSearchPage(
+                  "like",
+                  $(this)
+                    .parent()
+                    .attr("data-reactid")
+                );
+              }),
+            $("<a class='training_anchor'>")
+              .text("Dislike")
+              .css(style)
+              .attr("href", "javascript:void(0)")
+              .unbind()
+              .click(function() {
+                onFeelingClickAtSearchPage(
+                  "dislike",
+                  $(this)
+                    .parent()
+                    .attr("data-reactid")
+                );
+              })
+          );
+        }
+      );
+    }
+  } catch (e) {
+    console.log(e);
+  }
+
+  function getHITFromReactId(reactId) {
+    let hitsIndex = reactId.substr(reactId.indexOf("$", 0) + 1, 1);
+    return hits[hitsIndex];
+  }
+
+  function onFeelingClickAtSearchPage(feeling, reactId) {
+    let hit = getHITFromReactId(reactId);
+
+    sendHITFeelingToBackground(feeling, getClassifierStringFromHIT(hit));
+  }
+}
+
+function sendHITFeelingToBackground(feeling, classifierString) {
+  chrome.runtime.sendMessage(
+    {
+      msg: "learn",
+      data: { feeling: feeling, classifierString: classifierString }
+    },
+    function(response) {
+      showSnackBar(
+        "Response received. This will help machine learning choose HITs for you."
+      );
+    }
+  );
+}
+
+function getClassifierStringFromHIT(hit) {
+  if (hit.title == null) hit = hit.project;
+  return (
+    hit.title +
+    " " +
+    (hit.description != null ? hit.description : "") +
+    " " +
+    hit.requester_id +
+    " " +
+    hit.requester_name +
+    " "
+  );
+}
+
+function renderProjectPreferencesButton() {
+  let detailRow = $(".container-fluid.project-detail-bar").children(".row");
+  let elementToAdd = $("<div id='edit_project_preferences_wrapper'>")
+    .attr("class", "col-md-2")
+    .append(
+      $("<a id='project_preferences_anchor'>")
+        .attr("href", "javascript:void(0)")
+        .text("Edit HIT preferences")
+        .unbind()
+        .click(showProjectPreferencesDialog)
+    );
+  $(elementToAdd).insertAfter(
+    $(detailRow)
+      .children(".col-md-5")
+      .eq(0)
+  );
+  detailRow
+    .children("div")
+    .eq(2)
+    .addClass("col-md-5")
+    .removeClass("col-md-7");
+}
+
+function appendHitPreferencesDialog() {
+  if ($("#tg_project_preferences_dialog").length == 0) {
+    $.ajax(
+      chrome.extension.getURL("src/html/tg_project_preferences_dialog.html")
+    ).done(function(data) {
+      $(document.body).append(data);
+    });
+  }
+}
+
+function renderFeelingTrainingButton() {
+  $("#MainContent").append(
+    getFabButton(
+      "thumb_up",
+      {
+        position: "absolute",
+        right: 16,
+        bottom: 16,
+        margin: 16,
+        "z-index": 10
+      },
+      function() {
+        sendHITFeelingToBackground(
+          "like",
+          getClassifierStringFromHITWorkPage()
+        );
+      }
+    ),
+    getFabButton(
+      "thumb_down",
+      {
+        position: "absolute",
+        left: 16,
+        bottom: 16,
+        margin: 16,
+        "z-index": 10
+      },
+      function() {
+        sendHITFeelingToBackground(
+          "dislike",
+          getClassifierStringFromHITWorkPage()
+        );
+      }
+    )
+  );
+  const button = document.querySelector(".fab-button");
+  mdc.ripple.MDCRipple.attachTo(button);
+}
+
+function onHITWorkPageLoaded() {
+  predictFeeling();
+  handleAutomaticReturn();
+  renderFeelingTrainingButton();
+  let projectId = getValueFromLink("projects");
+  if (projectId != null) {
+    chrome.runtime.sendMessage(
+      { msg: "get_project_preferences", data: { projectId: projectId } },
+      response => {
+        let data = response.data;
+        if (data != null) {
+          let projectPrefs = data.projectPrefs;
+          if (projectPrefs != null) {
+            currentProjectPreferences = projectPrefs;
+            currentProjectPreferences.projectId = projectId;
+            renderProjectPreferencesButton();
+          } else {
+            currentProjectPreferences = {
+              acceptedTillNow: 1,
+              canAcceptMore: false,
+              maxAcceptCount: 1,
+              projectId: projectId
+            };
+            renderProjectPreferencesButton();
+          }
+        }
+      }
+    );
+  }
+}
+
+function getValueFromLink(key) {
+  let parts = window.location.href.split("/");
+  let value = parts[parts.indexOf(key) + 1];
+
+  let querySymbolIndex = value.indexOf("?");
+  if (querySymbolIndex > -1) value = value.substring(0, querySymbolIndex);
+  return value;
+}
+
+function getHitFromWorkPage(callback) {
+  if (pageType.HIT) {
+    GM_xmlhttpRequest({
+      url: window.location.href,
+      onload: response => {
+        currentPageHit = response;
+        if (callback != null) callback(currentPageHit);
+      }
+    });
+  }
+}
+
+var hitTimeOutHandler;
+
+function handleAutomaticReturn() {
+  let noTimeIntervalShown = $("#return_automatic_wrapper").length == 0;
+
+  if (settings != null) {
+    let hitPrefs = settings.hitPreferences;
+    if (noTimeIntervalShown) {
+      getHitFromWorkPage(hit => {
+        let expirationTimeLeft = hit.time_to_deadline_in_seconds;
+        let thresholdForReturn = 10;
+        let thresholdForAlert = 310;
+        if (expirationTimeLeft != null && hitPrefs.returnAutomatically) {
+          if (expirationTimeLeft > thresholdForReturn) {
+            let timeOutFor =
+              (expirationTimeLeft > thresholdForAlert
+                ? expirationTimeLeft - thresholdForAlert
+                : 0) * 1000;
+            setTimeout(() => {
+              if (timeOutFor > 0) expirationTimeLeft = thresholdForAlert;
+              expirationTimeLeft = expirationTimeLeft - thresholdForReturn;
+              $(".navbar-content .work-pipeline-action").append(
+                $("<div id='return_automatic_wrapper'>").append(
+                  $("<span id='returnWarning'>")
+                    .css({ padding: "8px", color: "white" })
+                    .text(
+                      "Returning HIT Automatically in " +
+                        expirationTimeLeft +
+                        " seconds."
+                    ),
+                  $("<button>")
+                    .attr("class", "btn btn-secondary")
+                    .text("Stop automatic return")
+                    .unbind()
+                    .click(function(e) {
+                      clearInterval(hitTimeOutHandler);
+                      $("#return_automatic_wrapper").remove();
+                    })
+                )
+              );
+              hitTimeOutHandler = setInterval(() => {
+                expirationTimeLeft--;
+                if (expirationTimeLeft >= 0) {
+                  $("#returnWarning").text(
+                    "Returning HIT Automatically in " +
+                      expirationTimeLeft +
+                      " seconds."
+                  );
+                } else {
+                  returnCurrentlyVisibleHITFromHITWorkPage();
+                  clearInterval(hitTimeOutHandler);
+                }
+              }, 1000);
+            }, timeOutFor);
+          } else {
+            returnCurrentlyVisibleHITFromHITWorkPage();
+          }
+        } else if (
+          !hitPrefs.returnAutomatically &&
+          expirationTimeLeft != null
+        ) {
+          removeTimeIntervalForAutomaticReturn();
+        }
+      });
+    } else if (!hitPrefs.returnAutomatically) {
+      removeTimeIntervalForAutomaticReturn();
+    }
+  } else {
+    removeTimeIntervalForAutomaticReturn();
+  }
+}
+
+function removeTimeIntervalForAutomaticReturn() {
+  if (hitTimeOutHandler != null) clearInterval(hitTimeOutHandler);
+  let div = $("#return_automatic_wrapper");
+  if (div != null) div.remove();
+}
+
+function returnCurrentlyVisibleHITFromHITWorkPage() {
+  $(":contains('Return')")
+    .closest("button")
+    .click();
+}
+
+function getClassifierStringFromHITWorkPage() {
+  let data = $(".project-detail-bar [data-react-class]").data("react-props");
+  let modalOptions = data.modalOptions;
+  if (data) {
+    let classifierString =
+      modalOptions.projectTitle +
+      " " +
+      modalOptions.description +
+      " " +
+      getQueryStringValue(modalOptions.contactRequesterUrl, "requester_id") +
+      " " +
+      getQueryStringValue(modalOptions.contactRequesterUrl, "name");
+    return classifierString;
+  }
+}
+
+function predictFeeling() {
+  chrome.runtime.sendMessage(
+    {
+      msg: "categorize",
+      data: { classifierString: getClassifierStringFromHITWorkPage() }
+    },
+    function(response) {
+      if (response != null) {
+        $(".navbar-content .work-pipeline-action").prepend(
+          $("<span id='feeling_prediction_hit_page_span'>")
+            .css({ padding: "8px", color: "white" })
+            .text("Turking Guru thinks you " + response.feeling + " this hit.")
+        );
+      }
+    }
+  );
+}
+
+function getQueryStringValue(url, key) {
+  let stringToSearch = key + "%5D=";
+  let startIndex = url.indexOf(stringToSearch) + stringToSearch.length;
+
+  return url
+    .substring(startIndex, url.indexOf("&", startIndex))
+    .replace("+", " ");
+}
+
+chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
+  let data = request.data;
+  let requester, keyword;
+  switch (request.msg) {
+    case "hits_checked":
+      $("#tg_refresh_time").text("Last checked HITs on:" + data.lastUpdatedOn);
+      /** Remove this to show feed box
+      let watchers = data.watchers;
+      if (watchers.length > 0) {
+        let mainWatcher = watchers[0];
+        let newHits = mainWatcher.newHits;
+        if (newHits != null && newHits.length > 0) {
+          newHits.forEach(hit => {
+            $(".hit-insert").append($("<div class='hit'>").text(hit.title));
+          });
+        }
+      }
+       */
+      break;
+    case "snack_message":
+      showSnackBar(data.text);
+      break;
+    case "get_mturk_id":
+      $(document).ready(function() {
+        let data = $(".text-uppercase [data-react-class]").data("react-props");
+        if (data != null) sendResponse(data.textToCopy);
+      });
+      return true;
+      break;
+    case "successful_import":
+      showSnackBar("Data successfully imported.");
+      break;
+    case "captcha_detected":
+      if (data.showDialog) {
+        showDialog(
+          "Captcha detected",
+          "Turking Guru feels you have encountered a captcha so he has stopped turking for you. As this feature is experimental and guru wants to improve, can you tell him whether you have actually encountered a captcha?",
+          result => {
+            chrome.runtime.sendMessage({
+              msg: "actually_found_captcha_survey_result",
+              data: { actuallyFoundCaptcha: result ? 1 : -1 }
+            });
+          }
+        );
+      } else {
+        showSnackBar(
+          "Turking stopped because guru thinks you have encountered a captcha. He is not quite sure though!"
+        );
+      }
+
+    case "added_to_favourite_requesters":
+      requester = data.requester;
+      favourite_requesters[requester.id] = requester;
+      delete blocked_requesters[requester.id];
+      if (data.showSnackbar)
+        showSnackBar("Added to favourite requesters list.");
+      break;
+    case "added_to_blocked_requesters":
+      requester = data.requester;
+      delete favourite_requesters[requester.id];
+      blocked_requesters[requester.id] = requester;
+      if (data.showSnackbar) showSnackBar("Added to blocked requesters list");
+
+      break;
+    case "added_to_favourite_keywords":
+      keyword = data.keyword;
+      if (keyword != null) {
+        favourite_keywords[keyword.id] = keyword;
+        if (data.blockedKeywordKey != null) {
+          delete blocked_keywords[data.blockedKeywordKey];
+          $("#" + data.blockedKeywordKey).remove();
+        }
+      }
+      changeChipInputWidth();
+      if (data.showSnackbar) showSnackBar("Added to favourite keywords list.");
+      break;
+    case "added_to_blocked_keywords":
+      keyword = data.keyword;
+      if (keyword != null) {
+        blocked_keywords[keyword.id] = keyword;
+        if (data.favouriteKeywordKey != null) {
+          delete favourite_keywords[data.favouriteKeywordKey];
+          $("#" + data.favouriteKeywordKey).remove();
+        }
+      }
+      changeChipInputWidth();
+      if (data.showSnackbar) showSnackBar("Added to blocked keywords list");
+
+      break;
+    case "settings_changed":
+      settings = data.settings;
+      if (settings != null && authUser != null && userDetails != null) {
+        $("#tg_toggle_turking").text(
+          (settings.isTurking ? "Stop" : "Start") + " turking"
+        );
+        if (pageType.HIT) {
+          handleAutomaticReturn();
+          getHitFromWorkPage();
+        }
+        sendResponse({ done: true });
+      }
+      break;
+    case "auth_state_changed":
+      authUser = data.user;
+
+      if (authUser == null) {
+        userDetails = null;
+        settings = null;
+        blocked_keywords = {};
+        blocked_requesters = {};
+        favourite_keywords = {};
+        favourite_requesters = {};
+        showSnackBar("Signed out successfully");
+        $(".training_anchor").remove();
+        $(".prediction_span").remove();
+        $("#feeling_prediction_hit_page_span").remove();
+        $(".fab-button").remove();
+        $("#edit_project_preferences_wrapper").remove();
+        if (pageType.HIT) {
+          $(".container-fluid.project-detail-bar")
+            .children(".row")
+            .children("div")
+            .eq(1)
+            .addClass("col-md-7")
+            .removeClass("col-md-5");
+        }
+      } else {
+        showSnackBar(
+          "Welcome " +
+            (authUser.displayName != null
+              ? authUser.displayName
+              : "to Turking Guru") +
+            " !"
+        );
+      }
+      onTGAuthStateChanged();
+      if (progressBar != null) progressBar.close();
+      break;
+  }
+});
